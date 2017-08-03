@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# Applies valid pending transaction to the ledger.
+# This applies transactions to the ledger but does not mine a new block.
+# Transactions are applied by checking the signature and balance of the sender.
+#
+# XXX: This file shows the weaknesses of doing all of this in bash and relying
+# on files to store data.
+
+set -euo pipefail
+
+source ${BASH_SOURCE%/*}/.helpers.sh
+
+# Extract a transactions data to shell variables.
+readonly extract_filter='@sh "
+local readonly from=\(.from)
+local readonly to=\(.to)
+local readonly amount=\(.amount)
+local readonly signature=\(.signature)
+"'
+
+main() {
+  if [ ! -f "$pending" ]; then
+    echo "No transactions pending"
+    exit 0
+  fi
+
+  # XXX: The verified transaction list for every block should only include
+  # transactions form that block so at some point we have to clear the old list.
+  # We'll clear it now only if it hasn't been changed.
+  git diff-index --quiet HEAD "$verified" && : > "$verified"
+
+  # Copy pending transactions to a temporary location so we can add invalid
+  # transactions back to pending.
+  # N.B. This is dumb.
+  working=$(mktemp)
+  cleanup() {
+    rm "$working"
+  }
+  trap cleanup EXIT
+  mv "$pending" "$working"
+
+  # Try to apply each transaction, putting failed transactions back into pending.
+  # A transaction may fail to apply because the sender doesn't have enough coin.
+  # We'll put it back in pending in case someone gives them money :).
+  # A transaction will fail to apply if the signature is invalid. We really
+  # shouldn't re-append those.
+  while read transaction; do
+    apply "$transaction" || echo "$transaction" >> "$pending"
+  done < "$working"
+
+  echo "done"
+}
+
+apply() {
+  transaction="$1"
+  eval "$(echo "$transaction" | jq -r "$extract_filter")"
+  echo "$from sent $amount coins to $to (verifing...)"
+
+  # verify that the transaction was created by someone that knew
+  # the private key for the from address.
+  echo -n "Signature "
+  verify "$from" "$signature" "$from $to $amount"
+
+  # check balance
+  ledger_balance=$(jq -er --arg acc "$from" '.[$acc] // 0' "$ledger")
+  new=$((ledger_balance - amount))
+
+  if [ "$new" -lt 0 ]; then
+    echo "$from is overdrawn $new, rejecting transaction"
+    return 1
+  fi
+
+  # modify ledger
+  new_ledger="$(jq -er \
+    --arg from "$from" \
+    --arg to "$to" \
+    --arg amount "$amount" \
+    '  .[$from] = (.[$from] // 0) - ($amount | tonumber)
+     | .[$to] = (.[$to] // 0) + ($amount | tonumber)
+     ' $ledger)"
+
+  echo "$new_ledger" > "$ledger"
+  echo "$transaction" >> "$verified"
+}
+
+main "$@"

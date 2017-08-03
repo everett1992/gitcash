@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+source ${BASH_SOURCE%/*}/.helpers.sh
+
+# Create some demo accounts. Normally the blockchain doesn't have access to
+# anyones private keys. These are only included for the demo.
+
+names="Alice Bob Charlie Dave Erin Frank"
+
+mkdir -p "${_private_keys}"
+mkdir -p "${public_keys}"
+
+for name in $names; do
+  pri="${_private_keys}/${name}.private.pem"
+  pub="${public_keys}/${name}.public.pem"
+
+  echo "Creating ${name}'s private key"
+  openssl genrsa -out "$pri" 2048
+
+  echo "Creating ${name}'s public key"
+  openssl rsa -in "$pri" -outform PEM -pubout -out "$pub"
+done
+
+echo "Done"

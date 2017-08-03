@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# create new blocks (commits)
+# The ledger and verified transactions are committed then
+# the script works to find a number that causes the commit to start
+# with a number of zeros.
+#
+# The hash of the commit proves the miner worked to find the commit
+# (or got really lucky). The proof of work lets us trust this commit.
+# It took the miner time, energy, and money to create it.
+# More details on Proof of work in the readme.
+set -uo pipefail
+
+source ${BASH_SOURCE%/*}/.helpers.sh
+
+# Commit the state of the chain.
+git add ledger verified
+
+# This is the number we'll fiddle with to cause the hash to start with zeros.
+# N.B. Gitcash doesn't require a nonce because a commit's hash is created from
+# data that includes the current time. Relying  on time would limit githash
+# mining to 1 hash per second, the resolution of git's author and commit date.
+nonce=0
+
+# A valid commit must start with this string to be valid. A longer prefix
+# will require more tries to find, but 0 isn't special.
+#
+# Production blockchains adjust difficulty based on the rate blocks are found.
+# If blocks are found often the difficulty is increased to make blocks more
+# expensive.
+target='^000'
+
+# Create the new commit.
+git commit -m "$nonce" --allow-empty -q
+
+# Amend the commit with a new message as long as the target is not met.
+while [[ ! $(git rev-parse HEAD) =~ $target ]]; do
+  let nonce++
+  git commit --amend -m "$nonce" --allow-empty -q
+done
+
+echo -n "Block created "
+git rev-parse HEAD
+
+git log --oneline --decorate --all --graph -n 6

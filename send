@@ -1,0 +1,74 @@
+#!/bin/bash
+set -o pipefail
+
+source ${BASH_SOURCE%/*}/.helpers.sh
+
+usage() {
+	cat<<-EOF
+	$0 --from <address> --to <address> --key <key> --amount <n>
+	
+	Send coins to an address.
+	
+	  --from|-f	Address to withdraw funds from.
+	  --to|-t	Address to deposit funds to.
+	  --key|-k	location of private key file for <from>.
+	  --amount|-a	Amount of funds to send.
+	  --help -h	Print this help message.
+	EOF
+}
+
+main() {
+  from='' to='' key='' amount=''
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from|-f) from=$2 ;  shift ; ;;
+      --to|-t) to=$2 ;  shift ; ;;
+      --key|-k) key=$2 ;  shift ; ;;
+      --amount|-a) amount=$2 ;  shift ;;
+      --help|-h) usage ; exit 0 ; ;;
+      *) echo "unknown option $1 (-h for help)" >&2 ; exit 1 ; ;;
+    esac
+    shift
+  done
+
+  set -eu
+
+  assert_public '--from' "$from"
+  assert_public '--to' "$to"
+  assert_private '--key' "$key"
+  assert_int '--amount' "$amount"
+
+  # Sign transaction
+  echo "Signing transaction..."
+
+  # Create a signature of the transactions details using the private key twin
+  # of the 'from' address's public key.
+  # Knowing the private key authorizes the creator to send the funds.
+  # See the readme's section on public private key cryptography
+  transaction="$from $to $amount"
+  signature="$(sign "$key" "$transaction")"
+
+  # Check signature with public key for the from address.
+  # This is just a sanity test, it will be checked by the miner when validating
+  # transaction.
+  echo "Verifying that private key matches form address..."
+  verify "$from" "$signature" "$transaction"
+
+  # Just using jq to format and escape JSON.
+  jq --null-input --compact-output \
+    --arg from "$from" \
+    --arg to "$to" \
+    --arg amount "$amount" \
+    --arg signature "$signature" \
+    '{
+       from: $from,
+       to: $to,
+       amount: $amount | tonumber,
+       signature: $signature
+     }' >> $pending
+
+  echo "$from sent $amount coins to $to (pending)"
+}
+
+main "$@"
+

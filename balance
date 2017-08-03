@@ -1,0 +1,62 @@
+#!/bin/bash
+set -euo pipefail
+
+source ${BASH_SOURCE%/*}/.helpers.sh
+
+usage() {
+	cat<<-EOF
+	$0 <address> [<address>, ...]
+	
+	Check the current balance of accounts in the ledger and the balance if all
+	pending transactions.
+	
+	  --help -h	Print this help message.
+	EOF
+}
+
+readonly balance_filter='.[$acc] // 0'
+
+readonly debit_filter='
+  map(select(.from == "\($acc)"))
+  | map(.amount)
+  | add
+  // 0'
+
+readonly credit_filter='
+  map(select(.to == "\($acc)"))
+  | map(.amount)
+  | add
+  // 0'
+
+main() {
+  accounts=()
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --help|-h) usage ; exit 0 ; ;;
+      -*) echo "unknown flag $1 (-h for help)" >&2 ; exit 1 ; ;;
+      *) accounts+=("$1"); shift ;;
+    esac
+  done
+
+  table ${accounts[@]}| column -t -s'	'
+}
+
+table() {
+  echo "Account	Balance	Pending Balance"
+  for acc in $@; do
+    ledger_balance=$(jq -er --arg acc "$acc" "$balance_filter" "$ledger")
+
+    # Create pending if it doesn't exist.
+    [ -s "$pending" ] || touch "$pending"
+
+    debit=$(jq -er --slurp --arg acc "$acc" "$debit_filter" "$pending")
+    credit=$(jq -er --slurp --arg acc "$acc" "$credit_filter" "$pending")
+
+    total=$((ledger_balance - debit + credit))
+
+    echo  "$acc:	$ledger_balance	$total"
+  done
+}
+
+main "$@"
